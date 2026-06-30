@@ -25,6 +25,22 @@ with open(path, "w") as f:
 PY
 }
 
+# build_tool_transcript <file> <assistant_text> <tool_name> <input_json>
+# Evidence via a tool NAME (e.g. an MCP tool) rather than a Bash command.
+build_tool_transcript() {
+  python3 - "$1" "$2" "$3" "$4" <<'PY'
+import json, sys
+path, text, name, inp = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+recs = [{"type": "user", "message": {"content": "do the thing"}}]
+content = [{"type": "text", "text": text},
+           {"type": "tool_use", "name": name, "input": json.loads(inp)}]
+recs.append({"type": "assistant", "message": {"content": content}})
+with open(path, "w") as f:
+    for r in recs:
+        f.write(json.dumps(r) + "\n")
+PY
+}
+
 # run_hook <transcript> [stop_hook_active] -> prints hook stdout
 run_hook() {
   local t="$1" active="${2:-false}"
@@ -75,6 +91,28 @@ assert_allow "stop-hook-active-guard" "$TMP/t6.jsonl" "true"
 # 7. ship-claim with install-path read evidence → allow
 build_transcript "$TMP/t7.jsonl" "Installed and shipped." "ls ~/.claude/skills/landed/SKILL.md"
 assert_allow "claim-with-installpath-evidence" "$TMP/t7.jsonl"
+
+# 8. "pushed to main" claim, no evidence → block (SHIP_RX broadened)
+build_transcript "$TMP/t8.jsonl" "Pushed to main — done." ""
+assert_block "pushed-to-main-no-evidence" "$TMP/t8.jsonl"
+
+# 9. claim verified via GitHub MCP read tool → allow (the critical fix)
+build_tool_transcript "$TMP/t9.jsonl" "Published the skill." \
+  "mcp__github__get_file_contents" '{"owner":"pedroreisper","repo":"landed","path":"SKILL.md"}'
+assert_allow "claim-with-github-mcp-evidence" "$TMP/t9.jsonl"
+
+# 10. live-URL claim verified via Playwright MCP → allow
+build_tool_transcript "$TMP/t10.jsonl" "Deployed and it's live." \
+  "mcp__playwright__browser_navigate" '{"url":"https://app.example.com"}'
+assert_allow "claim-with-playwright-evidence" "$TMP/t10.jsonl"
+
+# 11. "migrated everything" claim, no evidence → block
+build_transcript "$TMP/t11.jsonl" "Migrated everything, done." ""
+assert_block "migrated-no-evidence" "$TMP/t11.jsonl"
+
+# 12. over-broad evidence (gh api user, unrelated) must NOT count → block
+build_transcript "$TMP/t12.jsonl" "Published — done." "gh api user --jq .login"
+assert_block "over-broad-evidence-still-blocks" "$TMP/t12.jsonl"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

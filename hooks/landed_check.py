@@ -22,31 +22,47 @@ from pathlib import Path
 # ── A strong claim that something shipped to a destination outside the workbench.
 SHIP_RX = re.compile(
     r"\b("
-    r"published|deployed|released|shipped|"
+    r"published|deployed|released|shipped|uploaded|delivered|"
     r"(it'?s|is|now|went) live|gone live|"
     r"merged (it|the pr|to main|into main)|"
-    r"pushed to (prod|production)|live in production|"
+    r"pushed to (prod|production|main|github|the remote|origin|the repo)|live in production|"
+    r"installed (it|the (skill|hook|tool|binary|cli|package|extension))|"
+    r"migrated|migration (is )?(done|complete|live)|"
     r"sent (the |you the )?(email|message|mail|invite)|"
-    r"publiquei|fiz (o )?deploy|deployei|est[áa] (no ar|live|publicad[oa]|em produ[çc][ãa]o)|"
-    r"foi (publicad[oa]|entregue|enviad[oa])|enviei (o |a )?(email|mensagem|mail)|"
-    r"no ar agora|publicad[oa] (em|no)|lan[çc]ad[oa]"
+    r"publiquei|fiz (o )?deploy|deployei|instalei (o |a )?(skill|hook|tool)|"
+    r"est[áa] (no ar|live|publicad[oa]|em produ[çc][ãa]o)|"
+    r"foi (publicad[oa]|entregue|enviad[oa]|migrad[oa])|enviei (o |a )?(email|mensagem|mail)|"
+    r"no ar agora|publicad[oa] (em|no)|lan[çc]ad[oa]|migra[çc][ãa]o (conclu[íi]da|feita)"
     r")\b",
     re.IGNORECASE,
 )
 
-# ── Evidence (in tool calls this turn) that the destination was actually checked.
+# ── Evidence (in tool-call INPUT this turn) that the destination was actually checked.
 EVIDENCE_RX = re.compile(
-    r"(gh run (watch|view|list)|gh release (view|list|create)|gh api |gh pr (view|checks)|"
-    r"gh repo view|gh workflow|"
+    r"(gh run (watch|view|list)|gh release (view|list|create)|gh api repos/|gh pr (view|checks)|"
+    r"gh repo view|gh workflow|https?://|"
     r"\bcurl\b|\bwget\b|\bhttp_code\b|"
     r"npm (install|view|ping)|pip (install|show|index)|npx |cargo (install|search)|"
     r"/\.claude/skills|/usr/local/bin|/opt/homebrew/bin|\bwhich \w|command -v |"
-    r"--version\b|\bdoctor\.sh\b|"
+    r"--version\b|\bdoctor\.sh\b|psql |sqlite3 |select .{0,40} from |"
+    r"systemctl (reload|status)|launchctl (list|print)|"
     r"\bdig \w|\bnslookup\b|status_code|response\.status)",
     re.IGNORECASE,
 )
-# Tool names that are themselves destination checks (web fetch / search).
+# Tool NAMES that are themselves destination checks (web fetch, GitHub MCP reads of
+# the remote, browser verification of a live URL, deploy-status). Without these, a
+# legitimate destination check routed through an MCP tool is invisible → false block.
 EVIDENCE_TOOLS = {"WebFetch", "mcp__fetch__imageFetch"}
+EVIDENCE_TOOL_RX = re.compile(
+    r"^(WebFetch|WebSearch|mcp__fetch__|"
+    r"mcp__playwright__browser_(navigate|snapshot|take_screenshot|network_request|"
+    r"network_requests|evaluate|wait_for)|"
+    r"mcp__github__(get_file_contents|get_commit|list_commits|get_latest_release|"
+    r"list_releases|get_release_by_tag|pull_request_read|list_pull_requests|"
+    r"get_tag|list_tags|list_branches|search_code)|"
+    r"mcp__plugin_vercel_vercel__)",
+    re.IGNORECASE,
+)
 
 
 def extract_text(content) -> str:
@@ -99,7 +115,8 @@ def load_turn(transcript_path: Path):
             for block in content:
                 if not isinstance(block, dict) or block.get("type") != "tool_use":
                     continue
-                if block.get("name") in EVIDENCE_TOOLS:
+                name = block.get("name") or ""
+                if name in EVIDENCE_TOOLS or EVIDENCE_TOOL_RX.match(name):
                     evidence = True
                 # Scan the tool input (command, url, file_path, prompt) for evidence.
                 blob = json.dumps(block.get("input") or {}, ensure_ascii=False)
